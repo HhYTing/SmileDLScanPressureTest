@@ -1,25 +1,17 @@
 package com.example.smiledlScanpressuretext;
 
 import static android.content.Intent.ACTION_SCREEN_OFF;
-import static android.content.Intent.ACTION_SCREEN_ON;
 import static android.content.Intent.ACTION_USER_PRESENT;
-import static com.dawn.decoderapijni.ServiceTools.MSG_INIT_DONE;
-import static com.dawn.decoderapijni.ServiceTools.MSG_INIT_FIRMWARE_UPGRADE;
-import static com.dawn.decoderapijni.SoftEngine.SCN_EVENT_DEC_SUCC;
-import static com.dawn.decoderapijni.SoftEngine.SCN_EVENT_DEC_TIMEOUT;
-import static com.dawn.decoderapijni.SoftEngine.SCN_EVENT_SCANNER_OVERHEAT;
 
 import android.Manifest;
 import android.app.AlertDialog;
-import android.app.ProgressDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.AsyncTask;
@@ -29,10 +21,10 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Message;
 import android.provider.Settings;
+import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
-import android.view.WindowManager;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
@@ -49,21 +41,11 @@ import com.alipay.zoloz.smile2pay.MetaInfoCallback;
 import com.alipay.zoloz.smile2pay.Zoloz;
 import com.alipay.zoloz.smile2pay.verify.Smile2PayResponse;
 import com.alipay.zoloz.smile2pay.verify.VerifyCallback;
-import com.dawn.decoderapijni.ServiceTools;
 import com.dawn.decoderapijni.SoftEngine;
 import com.example.smiledlScanpressuretext.databinding.ActivitySmiledlscanBinding;
-
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.lang.ref.WeakReference;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
+import com.scanner.libs.ConnectServiceListener;
+import com.scanner.libs.ScanCallback;
+import com.scanner.libs.ScannerLib;
 import com.telpo.wxpay.app.MerchantInfo;
 import com.telpo.wxpay.app.api.alipayapi.api.AlipayCallBack;
 import com.telpo.wxpay.app.api.alipayapi.api.AlipayClient;
@@ -72,19 +54,21 @@ import com.telpo.wxpay.app.api.alipayapi.api.DefaultAlipayClient;
 import com.telpo.wxpay.app.api.alipayapi.api.request.ZolozAuthenticationCustomerSmilepayInitializeRequest;
 import com.telpo.wxpay.app.api.alipayapi.api.response.ZolozAuthenticationCustomerSmilepayInitializeResponse;
 
-public class SmileDLScanActivity extends AppCompatActivity {
+import java.lang.ref.WeakReference;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+public class SmileScanServicePressureTestActivity extends AppCompatActivity {
 
     private final int HANDLER_START_TEST = 1;
     private final int HANDLER_STOP_TEST = 2;
-    private final int HANDLER_TEST_DISPLAY_DATA = 3;
-    private final int HANDLER_TEST_TOTAL_TIME_UPDATE = 4;
-    private final int HANDLER_ADD_NEW_MESSAGE = 5;
-    private final int HANDLER_SMILE_PAY_RESPONSE = 6;
-    private final int HANDLER_IOT_ACTIVITE_STATE = 7;
-
-    private final int HANDLER_SCAN_NEW_MESSAGE = 8;
-    private final int HANDLER_SCANNER_OVERHEAT = 9;
-    private final int HANDLER_SCANNER_OTHER_ERROR = 10;
+    private final int HANDLER_TEST_TOTAL_TIME_UPDATE = 3;
+    private final int HANDLER_SMILE_PAY_RESPONSE = 4;
+    private final int HANDLER_IOT_ACTIVITE_STATE = 5;
+    private final int HANDLER_HAVE_SCAN_CODE = 6;
 
     private static final int SINGLE_MODE = 0;
     private static final int CONTINUOUS_MODE = 1;
@@ -96,8 +80,9 @@ public class SmileDLScanActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 1;
     private int totalTime = 0;  // 已经测试的时间
     private int count = 0;  // 已经测试的次数，成功次数
-    private int scan_count = 0;  // 扫码头已经测试的次数，成功次数
     private int smile_count = 0;  // 刷脸已经测试的次数，成功次数
+    private int scan_count = 0;  // 扫码已经测试的次数，成功次数
+    private int scan_data_count = 0;  // 扫码数据测试的次数，成功次数
     private int allCcount = 0;  // 已经测试的总次数，成功次数
     private long debugTime = -1; // 设置测试的时间
     private int intervalTime = 0;   // 测试间隔时间
@@ -108,6 +93,8 @@ public class SmileDLScanActivity extends AppCompatActivity {
     private static final int WIFI_SETTINGS_REQUEST_CODE = 1;
 
     private boolean isSmile = false;
+
+    private ScannerLib scannerLib;
     private final Handler handler = new Handler(new WeakReference<Handler.Callback>(new Handler.Callback() {
 
         @Override
@@ -122,7 +109,8 @@ public class SmileDLScanActivity extends AppCompatActivity {
                     binding.etSetTestTime.setEnabled(false);
                     binding.etTestInterval.setEnabled(false);
                     binding.startButton.setText(getString(R.string.stop_test));
-                    binding.tvSmileTestCount.setText(smile_count + "  (ALL:" + allCcount + ")");
+                    binding.tvSmileTestCount.setText(smile_count + "");
+                    binding.tvScanTestCount.setText(scan_count + "");
                     binding.tvAlreadyTestTime.setText(totalTime + "");
                     break;
                 case HANDLER_STOP_TEST:
@@ -161,12 +149,32 @@ public class SmileDLScanActivity extends AppCompatActivity {
                     isSmile = true;
 
                     if(isRunning) {
-                        new Handler().postDelayed(new Runnable() {
+
+                        handler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
-//                            startScan();
-//                            isSmile = false;
-                                smilePay();
+                                if (scannerLib.isCameraOpened()) {
+                                    scan_count++;
+                                    binding.tvScanTestCount.setText(String.valueOf(scan_count));
+
+                                    scannerLib.startScan(new ScanCallback() {
+
+                                        @Override
+                                        public void onScan(String s) {
+                                            scan_data_count++;
+                                            binding.tvScanDataCount.setText(String.valueOf(scan_data_count));
+                                        }
+                                    });
+
+                                }
+
+                                handler.postDelayed(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        scannerLib.stopScan();
+                                        smilePay();
+                                    }
+                                }, intervalTime);
                             }
 
                         }, intervalTime);
@@ -187,13 +195,15 @@ public class SmileDLScanActivity extends AppCompatActivity {
                         binding.tvIotState.setText(getString(R.string.iot_state_not_support));
                     }
                     break;
+                case HANDLER_HAVE_SCAN_CODE:
+                    scan_count++;
+                    binding.tvScanTestCount.setText(String.valueOf(scan_count));
+                    break;
 
             }
             return false;
         }
     }).get());
-    private Intent scanIntent;
-
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -206,19 +216,33 @@ public class SmileDLScanActivity extends AppCompatActivity {
             requestPermission();
         }
 
-//        binding.startButton.setEnabled(false);
-
-        if(isWifiConnected()){
+        if(isNetworkConnected(this)){
             binding.tvNetworkState.setText(getString(R.string.network_state_connected));
         }else {
             binding.tvNetworkState.setText(getString(R.string.network_state_disconnect));
         }
 
+        scannerLib = ScannerLib.getInstance(this, new ConnectServiceListener() {
+
+            @Override
+            public void onInitSuccess() {
+                Log.d(TAG, "com.coolscan.service onInitSuccess");
+
+                binding.tvCoolActiveState.setText(getString(scannerLib.isLicenseActive()? R.string.cool_active_state_active : R.string.cool_active_state_inactive));
+            }
+
+            @Override
+            public void onDeath() {
+                Log.d(TAG, "com.coolscan.service onDeath");
+            }
+        });
+
+
         handler.post(new Runnable() {
             @Override
             public void run() {
-                zoloz = Zoloz.getInstance(SmileDLScanActivity.this);
-                iOTSDK = IOTSDK.getInstance(SmileDLScanActivity.this, new InitFinishCallback() {
+                zoloz = Zoloz.getInstance(SmileScanServicePressureTestActivity.this);
+                iOTSDK = IOTSDK.getInstance(SmileScanServicePressureTestActivity.this, new InitFinishCallback() {
                     @Override
                     public void initFinished(boolean b) {
                         Log.i(Constants.TAG, "IOT--初始化" + (b ? "成功" : "失败"));
@@ -267,52 +291,35 @@ public class SmileDLScanActivity extends AppCompatActivity {
                 stopPressTest();
                 binding.startButton.setText(getString(R.string.start_test));
             }else {
-                if (isWifiConnected()) {
-                    /*if (iOTSDK.getIOTState(SmileDLScanActivity.this).equals("2")){
-                        binding.startButton.setText(getString(R.string.stop_test));
+                if (isNetworkConnected(this)) {
+                    if (InstallUtil.isInstalled(this,"com.alipay.zoloz.smile")) {
                         startPressTest();
                     }else {
-                        showIOTNotActivitedDialog();
-                    }*/
-                    startPressTest();
+                        showNotSupportSmileDialog();
+                    }
                 } else {
                     startActivityForResult(new Intent(Settings.ACTION_WIFI_SETTINGS), WIFI_SETTINGS_REQUEST_CODE);
                 }
             }
 
         });
-
-        File apkFile = new File(Environment.getExternalStorageDirectory().getAbsolutePath() + "/" + "DLScan.apk");
-        if (!InstallUtil.isInstalled(this,"com.dawn.java")) {
-            if (InstallUtil.saveApk(this,apkFile,"DLScan.apk")) {
-                InstallUtil.installApk(this,apkFile);
-            }
-        }else{
-            PackageManager packageManager = this.getPackageManager();
-            scanIntent = packageManager.getLaunchIntentForPackage("com.dawn.java");
-        }
-
     }
 
     @Override
     protected void onStart() {
         super.onStart();
-
-        /*if (isRunning && !isSmile) {
-            smilePay();
-        }*/
     }
 
     private void stopPressTest() {
         isRunning = false;
         handler.sendEmptyMessage(HANDLER_STOP_TEST);
-//        stopScan();
     }
 
     private void startPressTest() {
         totalTime = 0;
         smile_count = 0;
         scan_count = 0;
+        scan_data_count = 0;
         //设置测试时间
         String strDebugTime = binding.etSetTestTime.getText().toString();
         if (!strDebugTime.equals("") && !strDebugTime.equals("0")) {
@@ -327,19 +334,8 @@ public class SmileDLScanActivity extends AppCompatActivity {
         isRunning = true;
         handler.sendEmptyMessage(HANDLER_START_TEST);
 
-        if (InstallUtil.isInstalled(this,"com.alipay.zoloz.smile")) {
-            smilePay();
-        }else {
-//            startScan();
-        }
+        smilePay();
 
-    }
-
-    private void startScan() {
-        if(!isRunning){
-            return;
-        }
-        startActivity(scanIntent);
     }
 
     private final BroadcastReceiver screenOnOffReceiver = new BroadcastReceiver() {
@@ -360,6 +356,10 @@ public class SmileDLScanActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         stopPressTest();
+
+        if(scannerLib != null){
+            scannerLib.release();
+        }
     }
 
     private boolean checkPermission() {
@@ -391,29 +391,11 @@ public class SmileDLScanActivity extends AppCompatActivity {
         }
     }
 
-    private String mapHexByteToPercentageRange(byte hexByte) {
-        int[] percentageRange = new int[2];
-        int value = (hexByte - 0x01) & 0xFF; // 将字节转换为0到255的整数值
-
-        if(hexByte >= 0x01 && hexByte <= 0x0A) {
-            // 计算百分比范围
-            percentageRange[0] = value * 10; // 起始百分比
-            percentageRange[1] = percentageRange[0] + 10; // 终止百分比
-
-            String range = percentageRange[0] + "% - " + percentageRange[1] + "%";
-            return range;
-        }else if(hexByte == 0x0B) {
-            return "> maximum";
-        }
-
-        return "unknown";
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == WIFI_SETTINGS_REQUEST_CODE) {
-            if (isWifiConnected()) {
+            if (isNetworkConnected(this)) {
                 binding.tvNetworkState.setText(getString(R.string.network_state_connected));
             } else {
                 showWifiNotConnectedDialog();
@@ -428,10 +410,61 @@ public class SmileDLScanActivity extends AppCompatActivity {
         return networkInfo != null && networkInfo.isConnected();
     }
 
+    public boolean isNetworkConnected(Context context) {
+        //获取连接管理器
+        ConnectivityManager connectivityManager= (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+
+        //获取网络信息
+        NetworkInfo networkInfo=connectivityManager.getActiveNetworkInfo();
+        //判断是否有网络连接
+        if(networkInfo==null){
+            //无网络
+            Log.e(TAG, "networkInfo is null");
+            return false;
+        }
+
+        //获取网络状态
+        NetworkInfo.State networkState=networkInfo.getState();
+        if(networkState!= NetworkInfo.State.CONNECTED){
+            //未连接
+            Log.e(TAG, "networkState is not connected");
+            return false;
+        }
+
+        //获取网络是否可用
+        if(!networkInfo.isAvailable()){
+            //不可用
+            Log.e(TAG, "networkInfo is not available");
+            return false;
+        }
+
+        //获取网络类型
+        int networkType=networkInfo.getType();
+        if(networkType==ConnectivityManager.TYPE_WIFI){
+            //WiFi
+            Log.d(TAG, "networkType is WIFI");
+            return true;
+        } else if(networkType==ConnectivityManager.TYPE_MOBILE){
+            //移动数据
+            Log.d(TAG, "networkType is MOBILE");
+            //获取网络子类型
+            int subtype=networkInfo.getSubtype();
+            if(subtype== TelephonyManager.NETWORK_TYPE_LTE|subtype==TelephonyManager.NETWORK_TYPE_IWLAN){
+                Log.d(TAG, "networkSubtype is LTE or IWLAN");
+            }
+            return true;
+        }else if(networkType==ConnectivityManager.TYPE_ETHERNET){
+            //有线网络
+            Log.d(TAG, "networkType is ETHERNET");
+            return true;
+        }
+        return false;
+    }
+
     private void showWifiNotConnectedDialog() {
         new AlertDialog.Builder(this)
-                .setTitle("WiFi未连接")
-                .setMessage("请先连接WiFi后再开始测试。")
+                .setTitle("未连接网络")
+                .setMessage("请先连接网络后再开始测试。")
                 .setPositiveButton("确定", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
@@ -442,18 +475,16 @@ public class SmileDLScanActivity extends AppCompatActivity {
                 .show();
     }
 
-    private void showIOTNotActivitedDialog() {
+    private void showNotSupportSmileDialog() {
         new AlertDialog.Builder(this)
-                .setTitle("IOT未激活")
-                .setMessage("是否激活IOT？")
+                .setTitle("Simle")
+                .setMessage("不支持Smile，请安装smile.")
                 .setPositiveButton("确定", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
-                        new IOTActivateAsyncTask(SmileDLScanActivity.this).execute();
+                        new IOTActivateAsyncTask(SmileScanServicePressureTestActivity.this).execute();
                     }
-                })
-                .setNegativeButton("取消", null)
-                .show();
+                }).show();
     }
 
     private class IOTActivateAsyncTask extends AsyncTask<Void, Boolean, Boolean> {
@@ -481,7 +512,7 @@ public class SmileDLScanActivity extends AppCompatActivity {
                     e.printStackTrace();
                 }
 
-                iotState = iOTSDK.getIOTState(SmileDLScanActivity.this);
+                iotState = iOTSDK.getIOTState(SmileScanServicePressureTestActivity.this);
             }
 
             return isSucceed;
@@ -530,6 +561,9 @@ public class SmileDLScanActivity extends AppCompatActivity {
      * 发起刷脸支付请求，先zolozGetMetaInfo获取本地app信息，然后调用服务端获取刷脸付协议.
      */
     protected void smilePay() {
+        if(!isRunning){
+            return;
+        }
         zoloz.getMetaInfo(MerchantInfo.mockInfo(), new MetaInfoCallback() {
             @Override
             public void onMetaInfo(String metaInfo,Map<String, Object> extInfo) {
@@ -580,6 +614,7 @@ public class SmileDLScanActivity extends AppCompatActivity {
                                 return null;
                             }
                         });
+
             }
         });
     }
@@ -624,7 +659,7 @@ public class SmileDLScanActivity extends AppCompatActivity {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                Toast.makeText(SmileDLScanActivity.this, txt, Toast.LENGTH_LONG).show();
+                Toast.makeText(SmileScanServicePressureTestActivity.this, txt, Toast.LENGTH_LONG).show();
             }
         });
     }

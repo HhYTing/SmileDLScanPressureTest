@@ -3,13 +3,17 @@
 
     <string name="test_interval">"测试间隔: "</string>
     <string name="smile_test_count">"Smile测试次数: "</string>
-    <string name="scan_test_count">"Scan测试次数: "</string>
+    <string name="scan_test_count">"扫码摄像头打开次数: "</string>
+    <string name="scan_data_count">"扫码次数: "</string>
     <string name="set_test_time">"设置测试时间: "</string>
-    <string name="already_test_time">"已测试: "</string>
+    <string name="already_test_time">"已测试时间: "</string>
     <string name="start_test">"开始"</string>
     <string name="stop_test">"结束"</string>
     <string name="iot_state_text">"IOT激活状态："</string>
     <string name="network_state_text">"联网状态："</string>
+    <string name="cool_active_state_text">"酷码激活状态："</string>cool_active_state_active
+    <string name="cool_active_state_active">已激活</string>
+    <string name="cool_active_state_inactive">未激活</string>
     <string name="iot_state_connected">已激活</string>
     <string name="iot_state_disconnect">未激活</string>
     <string name="iot_state_not_support">不支持</string>
