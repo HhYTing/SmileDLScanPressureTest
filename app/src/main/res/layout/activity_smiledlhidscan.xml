@@ -94,29 +94,6 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/scan_test_count"
-                android:textSize="16sp"
-                android:textStyle="bold"/>
-
-            <TextView
-                android:id="@+id/tv_scan_test_count"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textSize="16sp"
-                android:layout_weight="1"/>
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=" times"
-                android:textSize="16sp" />
-        </TableRow>
-
-        <TableRow
-            android:layout_marginBottom="10dp">
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
                 android:text="@string/scan_data_count"
                 android:textSize="16sp"
                 android:textStyle="bold"/>
@@ -156,23 +133,6 @@
                 android:layout_height="wrap_content"
                 android:text=" s"
                 android:textSize="16sp" />
-        </TableRow>
-
-        <TableRow
-            android:layout_marginBottom="10dp">
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/cool_active_state_text"
-                android:textSize="16sp"
-                android:textStyle="bold"/>
-
-            <TextView
-                android:id="@+id/tv_cool_active_state"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="16sp"
-                android:layout_weight="1"/>
         </TableRow>
 
         <TableRow

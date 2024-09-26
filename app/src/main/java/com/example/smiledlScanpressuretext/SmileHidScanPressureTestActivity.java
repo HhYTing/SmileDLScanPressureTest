@@ -11,7 +11,6 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
-import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.AsyncTask;
@@ -41,8 +40,12 @@ import com.alipay.zoloz.smile2pay.MetaInfoCallback;
 import com.alipay.zoloz.smile2pay.Zoloz;
 import com.alipay.zoloz.smile2pay.verify.Smile2PayResponse;
 import com.alipay.zoloz.smile2pay.verify.VerifyCallback;
+import com.common.apiutil.powercontrol.PowerControl;
+import com.common.apiutil.util.SDKUtil;
 import com.dawn.decoderapijni.SoftEngine;
+import com.example.smiledlScanpressuretext.databinding.ActivitySmiledlhidscanBinding;
 import com.example.smiledlScanpressuretext.databinding.ActivitySmiledlscanBinding;
+import com.example.smiledlScanpressuretext.hid.KeyEventResolver;
 import com.scanner.libs.ConnectServiceListener;
 import com.scanner.libs.ScanCallback;
 import com.scanner.libs.ScannerLib;
@@ -61,14 +64,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-public class SmileScanServicePressureTestActivity extends AppCompatActivity {
+public class SmileHidScanPressureTestActivity extends AppCompatActivity implements KeyEventResolver.OnKeyEventListener{
 
     private final int HANDLER_START_TEST = 1;
     private final int HANDLER_STOP_TEST = 2;
     private final int HANDLER_TEST_TOTAL_TIME_UPDATE = 3;
     private final int HANDLER_SMILE_PAY_RESPONSE = 4;
     private final int HANDLER_IOT_ACTIVITE_STATE = 5;
-    private final int HANDLER_HAVE_SCAN_CODE = 6;
 
     private static final int SINGLE_MODE = 0;
     private static final int CONTINUOUS_MODE = 1;
@@ -76,7 +78,7 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
     private static final String TAG = Constants.TAG;
     private boolean isRunning = false;
     private Thread writeThread;
-    private ActivitySmiledlscanBinding binding;
+    private ActivitySmiledlhidscanBinding binding;
     private static final int PERMISSION_REQUEST_CODE = 1;
     private int totalTime = 0;  // 已经测试的时间
     private int count = 0;  // 已经测试的次数，成功次数
@@ -90,11 +92,12 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
 
     private IOTSDK iOTSDK;
 
+    private KeyEventResolver mKeyEventResolver;
+
     private static final int WIFI_SETTINGS_REQUEST_CODE = 1;
 
     private boolean isSmile = false;
 
-    private ScannerLib scannerLib;
     private final Handler handler = new Handler(new WeakReference<Handler.Callback>(new Handler.Callback() {
 
         @Override
@@ -110,7 +113,6 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
                     binding.etTestInterval.setEnabled(false);
                     binding.startButton.setText(getString(R.string.stop_test));
                     binding.tvSmileTestCount.setText(smile_count + "");
-                    binding.tvScanTestCount.setText(scan_count + "");
                     binding.tvScanDataCount.setText(scan_data_count + "");
                     binding.tvAlreadyTestTime.setText(totalTime + "");
                     break;
@@ -150,27 +152,10 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
                     isSmile = true;
 
                     if(isRunning) {
-
-                        scannerLib.startScan(new ScanCallback() {
-
-                            @Override
-                            public void onScan(String s) {
-                                scan_data_count++;
-                                binding.tvScanDataCount.setText(String.valueOf(scan_data_count));
-                            }
-                        });
-
                         handler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
-                                if (scannerLib.isCameraOpened()) {
-                                    scan_count++;
-                                    binding.tvScanTestCount.setText(String.valueOf(scan_count));
-                                }
-
-                                scannerLib.stopScan();
                                 smilePay();
-
                             }
 
                         }, intervalTime);
@@ -191,22 +176,23 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
                         binding.tvIotState.setText(getString(R.string.iot_state_not_support));
                     }
                     break;
-                case HANDLER_HAVE_SCAN_CODE:
-                    scan_count++;
-                    binding.tvScanTestCount.setText(String.valueOf(scan_count));
-                    break;
 
             }
             return false;
         }
     }).get());
+    private PowerControl powerControl;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        binding = ActivitySmiledlscanBinding.inflate(getLayoutInflater());
+        binding = ActivitySmiledlhidscanBinding.inflate(getLayoutInflater());
         View view = binding.getRoot();
         setContentView(view);
+
+        SDKUtil.getInstance(this).initSDK();
+        powerControl = new PowerControl(this);
+        powerControl.decodePower(1);
 
         if (!checkPermission()) {
             requestPermission();
@@ -219,27 +205,12 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
         }
 
         binding.startButton.setEnabled(false);
-        scannerLib = ScannerLib.getInstance(this, new ConnectServiceListener() {
-
-            @Override
-            public void onInitSuccess() {
-                Log.d(TAG, "com.coolscan.service onInitSuccess");
-                Toast.makeText(getApplicationContext(), "onInitSuccess", Toast.LENGTH_SHORT).show();
-                binding.tvCoolActiveState.setText(getString(scannerLib.isLicenseActive()? R.string.cool_active_state_active : R.string.cool_active_state_inactive));
-            }
-
-            @Override
-            public void onDeath() {
-                Log.d(TAG, "com.coolscan.service onDeath");
-            }
-        });
-
 
         handler.post(new Runnable() {
             @Override
             public void run() {
-                zoloz = Zoloz.getInstance(SmileScanServicePressureTestActivity.this);
-                iOTSDK = IOTSDK.getInstance(SmileScanServicePressureTestActivity.this, new InitFinishCallback() {
+                zoloz = Zoloz.getInstance(SmileHidScanPressureTestActivity.this);
+                iOTSDK = IOTSDK.getInstance(SmileHidScanPressureTestActivity.this, new InitFinishCallback() {
                     @Override
                     public void initFinished(boolean b) {
                         Log.i(Constants.TAG, "IOT--初始化" + (b ? "成功" : "失败"));
@@ -300,6 +271,8 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
             }
 
         });
+
+        mKeyEventResolver = new KeyEventResolver(this);
     }
 
     @Override
@@ -349,14 +322,30 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
         }
     };
 
+    /**
+     * 截获按键事件.发给ScanGunKeyEventHelper
+     */
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        //要是重虚拟键盘输入怎不拦截
+        if ("Virtual".equals(event.getDevice().getName())) {
+            return super.dispatchKeyEvent(event);
+        }
+        mKeyEventResolver.analysisKeyEvent(event);
+        return true;
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        powerControl.decodePower(0);
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
         stopPressTest();
-
-        if(scannerLib != null){
-            scannerLib.release();
-        }
+        mKeyEventResolver.onDestroy();
     }
 
     private boolean checkPermission() {
@@ -479,9 +468,22 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
                 .setPositiveButton("确定", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
-                        new IOTActivateAsyncTask(SmileScanServicePressureTestActivity.this).execute();
+                        new IOTActivateAsyncTask(SmileHidScanPressureTestActivity.this).execute();
                     }
                 }).show();
+    }
+
+    @Override
+    public void onScanSuccess(String barcode) {
+        if (isRunning){
+            scan_data_count++;
+            binding.tvScanDataCount.setText(String.valueOf(scan_data_count));
+        }
+    }
+
+    @Override
+    public void onBackPress() {
+
     }
 
     private class IOTActivateAsyncTask extends AsyncTask<Void, Boolean, Boolean> {
@@ -509,7 +511,7 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
                     e.printStackTrace();
                 }
 
-                iotState = iOTSDK.getIOTState(SmileScanServicePressureTestActivity.this);
+                iotState = iOTSDK.getIOTState(SmileHidScanPressureTestActivity.this);
             }
 
             return isSucceed;
@@ -656,7 +658,7 @@ public class SmileScanServicePressureTestActivity extends AppCompatActivity {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                Toast.makeText(SmileScanServicePressureTestActivity.this, txt, Toast.LENGTH_LONG).show();
+                Toast.makeText(SmileHidScanPressureTestActivity.this, txt, Toast.LENGTH_LONG).show();
             }
         });
     }
